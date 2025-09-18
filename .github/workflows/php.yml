@@ -3,17 +3,15 @@ name: build-wordpress-plugin
 on:
   push:
     branches: [ main, master ]
-    tags:     [ 'v*' ]          # si etiqueta p.ej. v1.2.3, publicará release
+    tags: [ 'v*' ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     env:
-      PHP_VERSION: '8.2'
-      NODE_VERSION: '20'
-      # Si su plugin está en subcarpeta, ponga aquí la ruta (ej.: "wp-content/plugins/mi-plugin")
+      PHP_VERSION: '7.4'       # <- su requisito
+      NODE_VERSION: '18'       # LTS compatible amplio
       PLUGIN_DIR: '.'
       ZIP_NAME: 'plugin-build.zip'
 
@@ -21,31 +19,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --- PHP / Composer ---
+      # PHP + Composer (con cache integrado)
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: openssl, zip, mbstring, intl, curl
           tools: composer
+          coverage: none
 
-      - name: Validate Composer (optional)
-        if: hashFiles(format('{0}/composer.json', env.PLUGIN_DIR)) != ''
-        working-directory: ${{ env.PLUGIN_DIR }}
-        run: composer validate --no-check-publish
+      # Cache Composer (v4) — opcional si no usa el cache integrado
+      - name: Cache Composer
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache/files
+            ${{ env.PLUGIN_DIR }}/vendor
+          key: composer-${{ runner.os }}-${{ env.PHP_VERSION }}-${{ hashFiles(format('{0}/composer.lock', env.PLUGIN_DIR)) }}
+          restore-keys: |
+            composer-${{ runner.os }}-${{ env.PHP_VERSION }}-
 
-      - name: Install PHP deps (no-dev)
+      - name: Composer install (no-dev)
         if: hashFiles(format('{0}/composer.json', env.PLUGIN_DIR)) != ''
         working-directory: ${{ env.PLUGIN_DIR }}
         run: composer install --no-dev --prefer-dist --no-progress --no-interaction
 
-      # --- Node / Build assets ---
+      # Node + npm cache (usa cache nativo de setup-node)
       - name: Setup Node
         if: hashFiles(format('{0}/package.json', env.PLUGIN_DIR)) != ''
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: ${{ env.PLUGIN_DIR }}/package-lock.json
 
       - name: Install frontend deps
@@ -58,7 +63,6 @@ jobs:
         working-directory: ${{ env.PLUGIN_DIR }}
         run: npm run build
 
-      # --- Empaquetado ZIP del plugin ---
       - name: Create ZIP
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
@@ -67,8 +71,8 @@ jobs:
             -x "*.git*/*" ".git/*" ".github/*" \
                "node_modules/*" "**/node_modules/*" \
                "**/tests/*" "**/test/*" "**/cypress/*" \
-               "**/*.map" "**/*.lock" \
-               "**/.DS_Store" "**/composer.json~" "**/composer.lock~"
+               "**/*.map" "**/*.lock" "**/.DS_Store"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
