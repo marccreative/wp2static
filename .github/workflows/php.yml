@@ -21,7 +21,7 @@ jobs:
 
       # PHP + Composer (con cache integrado)
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@v4
         with:
           php-version: ${{ env.PHP_VERSION }}
           extensions: openssl, zip, mbstring, intl, curl
