@@ -1,0 +1,94 @@
+name: build-wordpress-plugin
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:     [ 'v*' ]          # si etiqueta p.ej. v1.2.3, publicará release
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      PHP_VERSION: '8.2'
+      NODE_VERSION: '20'
+      # Si su plugin está en subcarpeta, ponga aquí la ruta (ej.: "wp-content/plugins/mi-plugin")
+      PLUGIN_DIR: '.'
+      ZIP_NAME: 'plugin-build.zip'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- PHP / Composer ---
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: openssl, zip, mbstring, intl, curl
+          tools: composer
+
+      - name: Validate Composer (optional)
+        if: hashFiles(format('{0}/composer.json', env.PLUGIN_DIR)) != ''
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: composer validate --no-check-publish
+
+      - name: Install PHP deps (no-dev)
+        if: hashFiles(format('{0}/composer.json', env.PLUGIN_DIR)) != ''
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: composer install --no-dev --prefer-dist --no-progress --no-interaction
+
+      # --- Node / Build assets ---
+      - name: Setup Node
+        if: hashFiles(format('{0}/package.json', env.PLUGIN_DIR)) != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ env.PLUGIN_DIR }}/package-lock.json
+
+      - name: Install frontend deps
+        if: hashFiles(format('{0}/package.json', env.PLUGIN_DIR)) != ''
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: npm ci
+
+      - name: Build assets
+        if: hashFiles(format('{0}/package.json', env.PLUGIN_DIR)) != ''
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: npm run build
+
+      # --- Empaquetado ZIP del plugin ---
+      - name: Create ZIP
+        working-directory: ${{ env.PLUGIN_DIR }}
+        run: |
+          rm -f "../${{ env.ZIP_NAME }}"
+          zip -r "../${{ env.ZIP_NAME }}" . \
+            -x "*.git*/*" ".git/*" ".github/*" \
+               "node_modules/*" "**/node_modules/*" \
+               "**/tests/*" "**/test/*" "**/cypress/*" \
+               "**/*.map" "**/*.lock" \
+               "**/.DS_Store" "**/composer.json~" "**/composer.lock~"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: plugin-build.zip
+          path: .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plugin-build.zip
+          generate_release_notes: true
